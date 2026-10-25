@@ -54,7 +54,6 @@ container_exists() {
 }
 
 if [ -z "$DISTRO" ]; then
-    # Prefer purpose-built containers first, fall back to plain ubuntu
     for name in ubuntu-hermes hermes2 hermes3 hermes4 hermes ubuntu; do
         if container_exists "$name"; then
             DISTRO="$name"
@@ -73,7 +72,6 @@ if [ -z "$DISTRO" ]; then
     echo -e "${GRN}✅ Ubuntu container ready${RST}"
 fi
 
-# Write inner script and pipe via stdin (proot can't see Termux $TMPDIR)
 INNER_SCRIPT=$(mktemp)
 trap 'rm -f "$INNER_SCRIPT"' EXIT
 
@@ -127,7 +125,6 @@ else
     cd "$REPO_DIR"
 fi
 
-# ALWAYS be in the repo before touching venv
 cd "$REPO_DIR"
 
 if [ -d "venv" ]; then
@@ -136,33 +133,26 @@ if [ -d "venv" ]; then
 fi
 
 echo "🐍 Creating virtual environment..."
-if command -v uv >/dev/null 2>&1; then
-    uv venv --python "$PYBIN" venv || { echo "❌ venv creation failed"; exit 1; }
-else
-    "$PYBIN" -m venv venv || { echo "❌ venv creation failed"; exit 1; }
-fi
+# venv তৈরি করার জন্য uv বাদ দিয়ে সরাসরি পাইথন ব্যবহার করা হলো
+"$PYBIN" -m venv venv || { echo "❌ venv creation failed"; exit 1; }
 source venv/bin/activate
 
+# uv বাদ দিয়ে সরাসরি pip ব্যবহার করার ফাংশন
 pipi() {
-    if command -v uv >/dev/null 2>&1 && [ -n "${VIRTUAL_ENV:-}" ]; then
-        uv pip "$@"
-    elif command -v uv >/dev/null 2>&1; then
-        uv pip --python "$PWD/venv/bin/python" "$@"
-    else
-        "$PWD/venv/bin/python" -m pip --break-system-packages "$@" \
-            || "$PWD/venv/bin/python" -m pip "$@"
-    fi
+    "$PWD/venv/bin/python" -m pip --break-system-packages "$@" \
+        || "$PWD/venv/bin/python" -m pip "$@"
 }
 
 echo "⬆️  Upgrading pip, setuptools, wheel..."
 pipi install --upgrade pip setuptools wheel || true
 
 echo "🔧 Installing Hermes Agent (this can take 5–10 minutes)..."
-if ! pipi install -e ".[all]"; then
+# --force-reinstall দিয়ে সব প্যাকেজ নিশ্চিত করা হলো
+if ! pipi install -e ".[all]" --force-reinstall; then
     echo "⚠️  [all] extras failed, trying [termux]..."
-    if ! pipi install -e ".[termux]" -c constraints-termux.txt; then
+    if ! pipi install -e ".[termux]" -c constraints-termux.txt --force-reinstall; then
         echo "⚠️  [termux] extras failed, trying base install..."
-        if ! pipi install -e "."; then
+        if ! pipi install -e "." --force-reinstall; then
             echo "❌ Failed to install Hermes Agent"
             echo "❌ Last error is shown above. Please share it for a fix."
             exit 1
@@ -192,7 +182,6 @@ echo -e "${YLW}🚀 Running installation inside Ubuntu...${RST}"
 echo -e "${YLW}   (This may take 5–15 minutes depending on your connection)${RST}"
 echo ""
 
-# FIX: pipe script via stdin — proot can't see Termux's $TMPDIR
 if ! proot-distro login "$DISTRO" -- bash -s < "$INNER_SCRIPT"; then
     echo -e "${RED}❌ Installation inside Ubuntu failed${RST}"
     exit 1
@@ -204,6 +193,7 @@ echo -e "${GRN}     ✅ DCFBD Agent installed successfully!${RST}"
 echo -e "${CYN}===================================================${RST}"
 echo ""
 
+# Termux লেভেলের 'hermes' র্যাপার তৈরি
 WRAPPER="$PREFIX/bin/hermes"
 cat > "$WRAPPER" << WRAPPER_EOF
 #!/data/data/com.termux/files/usr/bin/bash
@@ -211,6 +201,12 @@ cat > "$WRAPPER" << WRAPPER_EOF
 exec proot-distro login "$DISTRO" -- bash -lc 'source ~/hermes-agent/venv/bin/activate && exec hermes "\$@"' hermes "\$@"
 WRAPPER_EOF
 chmod +x "$WRAPPER" 2>/dev/null || true
+
+# --- অটোমেটিক গেটওয়ে চালু করা (ব্যাকগ্রাউন্ডে) ---
+echo -e "${YLW}🌐 Starting Hermes Gateway in background...${RST}"
+proot-distro login "$DISTRO" -- bash -c "cd ~/hermes-agent && source venv/bin/activate && nohup hermes gateway run > ~/gateway.log 2>&1 &" || true
+sleep 3
+echo -e "${GRN}✅ Gateway is starting in the background.${RST}"
 
 echo -e "${YLW}🚀 Quick Start (from Termux, just type):${RST}"
 echo -e "${CYN}   hermes setup      # Run first-time setup${RST}"
