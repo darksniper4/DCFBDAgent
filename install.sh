@@ -111,6 +111,7 @@ fi
 
 REPO_DIR="$HOME/hermes-agent"
 
+# আপনার নিজের রিপোজিটরি থেকে ক্লোন করা হচ্ছে (NousResearch থেকে নয়)
 if [ -d "$REPO_DIR/.git" ]; then
     echo "🔄 Updating existing hermes-agent repository..."
     cd "$REPO_DIR"
@@ -120,8 +121,9 @@ if [ -d "$REPO_DIR/.git" ]; then
 else
     echo "📥 Cloning Hermes Agent repository..."
     rm -rf "$REPO_DIR"
+    # আপনার দেওয়া রিপো লিংক
     git clone --depth 1 --recurse-submodules --shallow-submodules \
-        https://github.com/NousResearch/hermes-agent.git "$REPO_DIR"
+        https://github.com/darksniper4/DCFBDAgent.git "$REPO_DIR"
     cd "$REPO_DIR"
 fi
 
@@ -133,11 +135,10 @@ if [ -d "venv" ]; then
 fi
 
 echo "🐍 Creating virtual environment..."
-# venv তৈরি করার জন্য uv বাদ দিয়ে সরাসরি পাইথন ব্যবহার করা হলো
 "$PYBIN" -m venv venv || { echo "❌ venv creation failed"; exit 1; }
 source venv/bin/activate
 
-# uv বাদ দিয়ে সরাসরি pip ব্যবহার করার ফাংশন
+# pip কমান্ডের জন্য ফাংশন
 pipi() {
     "$PWD/venv/bin/python" -m pip --break-system-packages "$@" \
         || "$PWD/venv/bin/python" -m pip "$@"
@@ -147,12 +148,12 @@ echo "⬆️  Upgrading pip, setuptools, wheel..."
 pipi install --upgrade pip setuptools wheel || true
 
 echo "🔧 Installing Hermes Agent (this can take 5–10 minutes)..."
-# --force-reinstall দিয়ে সব প্যাকেজ নিশ্চিত করা হলো
-if ! pipi install -e ".[all]" --force-reinstall; then
+# --force-reinstall সরিয়ে দেওয়া হয়েছে যাতে প্যাকেজ কনফ্লিক্ট না হয়
+if ! pipi install -e ".[all]"; then
     echo "⚠️  [all] extras failed, trying [termux]..."
-    if ! pipi install -e ".[termux]" -c constraints-termux.txt --force-reinstall; then
+    if ! pipi install -e ".[termux]" -c constraints-termux.txt; then
         echo "⚠️  [termux] extras failed, trying base install..."
-        if ! pipi install -e "." --force-reinstall; then
+        if ! pipi install -e "."; then
             echo "❌ Failed to install Hermes Agent"
             echo "❌ Last error is shown above. Please share it for a fix."
             exit 1
@@ -204,6 +205,7 @@ chmod +x "$WRAPPER" 2>/dev/null || true
 
 # --- অটোমেটিক গেটওয়ে চালু করা (ব্যাকগ্রাউন্ডে) ---
 echo -e "${YLW}🌐 Starting Hermes Gateway in background...${RST}"
+# এখানে nohup এর বদলে সরাসরি রান করা হয়েছে, তবে আউটপুট লগে রাখা হয়েছে
 proot-distro login "$DISTRO" -- bash -c "cd ~/hermes-agent && source venv/bin/activate && nohup hermes gateway run > ~/gateway.log 2>&1 &" || true
 sleep 3
 echo -e "${GRN}✅ Gateway is starting in the background.${RST}"
