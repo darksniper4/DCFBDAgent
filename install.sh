@@ -21,54 +21,25 @@ clear 2>/dev/null || true
 echo -e "${CYN}=====================================================${RST}"
 echo -e "${RED}         ☤ DCFBDAgent INSTALLER ☤"
 echo -e "${CYN}=====================================================${RST}"
-echo -e "${GRN}       Tool: DCFBDAgent | Developer: DarkSniper${RST}"
-echo -e "${CYN}=====================================================${RST}"
-echo -e "${GRN}          Team: DarkNet Cyber Force BD${RST}"
-echo -e "${CYN}=====================================================${RST}"
-echo ""
 
 termux-wake-lock 2>/dev/null || true
 
 echo -e "${YLW}📦 Updating Termux packages...${RST}"
-if ! yes | pkg update -y 2>&1; then
-    echo -e "${YLW}⚠️  pkg update returned an error.${RST}"
-    apt --fix-broken install -y 2>&1 || true
-    yes | pkg update -y 2>&1 || true
-fi
-
-echo -e "${YLW}📦 Upgrading Termux packages...${RST}"
-yes | pkg upgrade -y 2>&1 || true
+# Termux এর এরর উপেক্ষা করে এগিয়ে যাওয়া
+yes | pkg update -y || true
+yes | pkg upgrade -y || true
 
 echo -e "${YLW}🔧 Ensuring proot-distro is installed...${RST}"
 pkg install proot-distro -y
 
 # --- Container setup ---
-DISTRO="${HERMES_DISTRO:-}"
-ROOTFS_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/lib/proot-distro"
+DISTRO="ubuntu"
 
-container_exists() {
-    proot-distro list 2>/dev/null | grep -qiE "^[[:space:]]*\*?[[:space:]]*$1([[:space:]]|$)" && return 0
-    [ -d "$ROOTFS_DIR/installed-rootfs/$1" ] && return 0
-    [ -f "$ROOTFS_DIR/containers/$1/manifest.json" ] && [ -d "$ROOTFS_DIR/containers/$1/rootfs" ] && return 0
-    return 1
-}
-
-if [ -z "$DISTRO" ]; then
-    for name in ubuntu-hermes hermes2 hermes3 hermes4 hermes ubuntu; do
-        if container_exists "$name"; then
-            DISTRO="$name"
-            echo -e "${GRN}✅ Reusing existing container: ${name}${RST}"
-            break
-        fi
-    done
-fi
-
-if [ -z "$DISTRO" ]; then
-    DISTRO="ubuntu"
+if proot-distro list 2>/dev/null | grep -qiE "^[[:space:]]*\*?[[:space:]]*${DISTRO}([[:space:]]|$)"; then
+    echo -e "${GRN}✅ Reusing existing container: ${DISTRO}${RST}"
+else
     echo -e "${YLW}🐧 Installing Ubuntu container (may take a few minutes)...${RST}"
-    if ! proot-distro install ubuntu 2>&1; then
-        echo -e "${YLW}⚠️  Install reported an issue — assuming 'ubuntu' exists, reusing it.${RST}"
-    fi
+    proot-distro install ${DISTRO}
     echo -e "${GRN}✅ Ubuntu container ready${RST}"
 fi
 
@@ -83,26 +54,30 @@ export DEBIAN_FRONTEND=noninteractive
 export TZ=UTC
 
 echo "📦 Updating Ubuntu packages..."
-apt-get update -qq
-apt-get upgrade -y -o Dpkg::Options::="--force-confold" >/dev/null 2>&1 || true
+apt-get update -y
+apt-get upgrade -y -o Dpkg::Options::="--force-confold" || true
 
 echo "🐍 Installing system dependencies..."
-apt-get install -y -o Dpkg::Options::="--force-confold" \
+# --fix-broken যোগ করা হয়েছে এবং সাইলেন্ট করা হয়নি যাতে এরর দেখা যায়
+apt-get install -y --fix-broken \
     python3 python3-pip python3-venv python3-dev python-is-python3 \
     git curl wget build-essential \
     nodejs npm \
     libffi-dev libssl-dev pkg-config \
-    ca-certificates >/dev/null 2>&1
+    ca-certificates
 
+echo "✅ System dependencies installed."
+
+# Python version check (3.11 to 3.13 required)
 PYBIN="python3"
 if "$PYBIN" -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info < (3, 14) else 1)' 2>/dev/null; then
     echo "✅ Default Python is compatible: $("$PYBIN" --version 2>&1)"
 else
     echo "⚠️  hermes-agent needs Python <3.14 — installing Python 3.13 via uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
+    curl -LsSf https://astral.sh/uv/install.sh | sh || true
     export PATH="$HOME/.local/bin:$PATH"
-    command -v uv >/dev/null 2>&1 || python3 -m pip install --break-system-packages uv >/dev/null 2>&1 || true
-    uv python install 3.13 >/dev/null 2>&1 || true
+    command -v uv >/dev/null 2>&1 || python3 -m pip install --break-system-packages uv || true
+    uv python install 3.13 || true
     if FOUND="$(uv python find 3.13 2>/dev/null)" && [ -x "$FOUND" ]; then
         PYBIN="$FOUND"
     fi
@@ -111,17 +86,14 @@ fi
 
 REPO_DIR="$HOME/hermes-agent"
 
-# আপনার নিজের রিপোজিটরি থেকে ক্লোন করা হচ্ছে (NousResearch থেকে নয়)
 if [ -d "$REPO_DIR/.git" ]; then
     echo "🔄 Updating existing hermes-agent repository..."
     cd "$REPO_DIR"
     git fetch origin
-    git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
     git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null || true
 else
     echo "📥 Cloning Hermes Agent repository..."
     rm -rf "$REPO_DIR"
-    # আপনার দেওয়া রিপো লিংক
     git clone --depth 1 --recurse-submodules --shallow-submodules \
         https://github.com/darksniper4/DCFBDAgent.git "$REPO_DIR"
     cd "$REPO_DIR"
@@ -138,7 +110,6 @@ echo "🐍 Creating virtual environment..."
 "$PYBIN" -m venv venv || { echo "❌ venv creation failed"; exit 1; }
 source venv/bin/activate
 
-# pip কমান্ডের জন্য ফাংশন
 pipi() {
     "$PWD/venv/bin/python" -m pip --break-system-packages "$@" \
         || "$PWD/venv/bin/python" -m pip "$@"
@@ -147,15 +118,13 @@ pipi() {
 echo "⬆️  Upgrading pip, setuptools, wheel..."
 pipi install --upgrade pip setuptools wheel || true
 
-echo "🔧 Installing Hermes Agent (this can take 5–10 minutes)..."
-# --force-reinstall সরিয়ে দেওয়া হয়েছে যাতে প্যাকেজ কনফ্লিক্ট না হয়
+echo "🔧 Installing Hermes Agent..."
 if ! pipi install -e ".[all]"; then
     echo "⚠️  [all] extras failed, trying [termux]..."
     if ! pipi install -e ".[termux]" -c constraints-termux.txt; then
         echo "⚠️  [termux] extras failed, trying base install..."
         if ! pipi install -e "."; then
             echo "❌ Failed to install Hermes Agent"
-            echo "❌ Last error is shown above. Please share it for a fix."
             exit 1
         fi
     fi
@@ -175,16 +144,15 @@ if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
 fi
 export PATH="$HOME/.local/bin:$PATH"
 
-echo ""
 echo "✅ Hermes Agent installed successfully inside Ubuntu!"
 INNER_EOF
 
 echo -e "${YLW}🚀 Running installation inside Ubuntu...${RST}"
 echo -e "${YLW}   (This may take 5–15 minutes depending on your connection)${RST}"
-echo ""
 
+# Ubuntu এর ভেতরে স্ক্রিপ্ট রান করা হচ্ছে
 if ! proot-distro login "$DISTRO" -- bash -s < "$INNER_SCRIPT"; then
-    echo -e "${RED}❌ Installation inside Ubuntu failed${RST}"
+    echo -e "${RED}❌ Installation inside Ubuntu failed. Check the errors above.${RST}"
     exit 1
 fi
 
@@ -192,20 +160,16 @@ echo ""
 echo -e "${CYN}===================================================${RST}"
 echo -e "${GRN}     ✅ DCFBD Agent installed successfully!${RST}"
 echo -e "${CYN}===================================================${RST}"
-echo ""
 
 # Termux লেভেলের 'hermes' র্যাপার তৈরি
 WRAPPER="$PREFIX/bin/hermes"
 cat > "$WRAPPER" << WRAPPER_EOF
 #!/data/data/com.termux/files/usr/bin/bash
-# DCFBD Agent - Termux-level launcher for Hermes Agent
 exec proot-distro login "$DISTRO" -- bash -lc 'source ~/hermes-agent/venv/bin/activate && exec hermes "\$@"' hermes "\$@"
 WRAPPER_EOF
 chmod +x "$WRAPPER" 2>/dev/null || true
 
-# --- অটোমেটিক গেটওয়ে চালু করা (ব্যাকগ্রাউন্ডে) ---
 echo -e "${YLW}🌐 Starting Hermes Gateway in background...${RST}"
-# এখানে nohup এর বদলে সরাসরি রান করা হয়েছে, তবে আউটপুট লগে রাখা হয়েছে
 proot-distro login "$DISTRO" -- bash -c "cd ~/hermes-agent && source venv/bin/activate && nohup hermes gateway run > ~/gateway.log 2>&1 &" || true
 sleep 3
 echo -e "${GRN}✅ Gateway is starting in the background.${RST}"
@@ -215,9 +179,3 @@ echo -e "${CYN}   hermes setup      # Run first-time setup${RST}"
 echo -e "${CYN}   hermes            # Start chatting${RST}"
 echo -e "${CYN}   hermes gateway    # Run the gateway${RST}"
 echo ""
-echo -e "${YLW}📖 Manual path (if 'hermes' wrapper is missing):${RST}"
-echo -e "${CYN}   proot-distro login $DISTRO${RST}"
-echo -e "${CYN}   cd hermes-agent && source venv/bin/activate${RST}"
-echo -e "${CYN}   hermes${RST}"
-echo ""
-echo -e "${GRN}💡 Need help? Visit: https://github.com/darksniper4/DCFBDAgent${RST}"
